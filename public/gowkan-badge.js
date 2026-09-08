@@ -74,8 +74,6 @@
           z-index: 2147483647;
           border-radius: 50%;
           overflow: hidden;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-          background: #fff;
           display: flex;
           align-items: center;
           justify-content: center;
