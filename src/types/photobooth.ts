@@ -44,8 +44,6 @@ export interface CapturedPhoto {
   dataUrl: string;
   filterCss: string;
   takenAt: number;
-  liveClipBlobUrl?: string | null;
-  liveClipDurationMs?: number | null;
 }
 
 export interface PhotoTransform {

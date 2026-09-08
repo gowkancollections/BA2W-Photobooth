@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { PhotoboothProvider } from "@/app/_providers/photobooth-provider";
 
@@ -31,6 +32,7 @@ export const metadata: Metadata = {
   },
 };
 
+
 export default function RootLayout({
   children,
 }: {
@@ -40,6 +42,7 @@ export default function RootLayout({
     <html lang="id">
       <body className="min-h-dvh w-full overflow-x-hidden">
         <PhotoboothProvider>{children}</PhotoboothProvider>
+      <Script src="/gowkan-badge.js" strategy="afterInteractive" /> 
       </body>
     </html>
   );

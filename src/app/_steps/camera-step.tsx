@@ -99,9 +99,6 @@ function CameraFlowInternal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoTimerRef = useRef<number | null>(null);
   const autoCancelledRef = useRef(false);
-  const liveRecorderRef = useRef<MediaRecorder | null>(null);
-  const liveChunksRef = useRef<Blob[]>([]);
-  const liveStartTsRef = useRef<number>(0);
 
   const slotsNeeded = selectedFrame?.slots.length ?? 0;
   const [phase, setPhase] = useState<CameraPhase>("preview");
@@ -241,76 +238,8 @@ function CameraFlowInternal({
   }, [ready]);
 
   const stopCamera = useCallback(() => {
-    if (liveRecorderRef.current && liveRecorderRef.current.state !== "inactive") {
-      try { liveRecorderRef.current.stop(); } catch {}
-    }
-    liveRecorderRef.current = null;
-    liveChunksRef.current = [];
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-  }, []);
-
-  const startLiveClipRecording = useCallback((): boolean => {
-    if (typeof (window as any).MediaRecorder !== "function") return false;
-    const stream = streamRef.current;
-    if (!stream) return false;
-    const mimeTypes = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
-    const mimeType = mimeTypes.find((t) => (window as any).MediaRecorder.isTypeSupported(t));
-    if (!mimeType) return false;
-    try {
-      const recorder = new (window as any).MediaRecorder(stream, { mimeType });
-      liveChunksRef.current = [];
-      recorder.ondataavailable = (ev: any) => {
-        if (ev.data && ev.data.size > 0) liveChunksRef.current.push(ev.data);
-      };
-      recorder.onerror = () => {
-        // ignore, fallback to still only
-      };
-      recorder.start(100);
-      liveRecorderRef.current = recorder;
-      liveStartTsRef.current = performance.now();
-      return true;
-    } catch {
-      liveRecorderRef.current = null;
-      liveChunksRef.current = [];
-      return false;
-    }
-  }, []);
-
-  const stopLiveClipRecording = useCallback((): Promise<{ blobUrl: string; durationMs: number } | null> => {
-    return new Promise((resolve) => {
-      const recorder = liveRecorderRef.current;
-      const startTs = liveStartTsRef.current;
-      if (!recorder || recorder.state === "inactive") {
-        liveRecorderRef.current = null;
-        liveChunksRef.current = [];
-        resolve(null);
-        return;
-      }
-      try {
-        const durationMs = performance.now() - startTs;
-        recorder.onstop = () => {
-          try {
-            const chunks = liveChunksRef.current;
-            if (chunks.length === 0) { resolve(null); return; }
-            const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
-            if (blob.size < 1024) { resolve(null); return; }
-            const blobUrl = URL.createObjectURL(blob);
-            resolve({ blobUrl, durationMs });
-          } catch {
-            resolve(null);
-          } finally {
-            liveRecorderRef.current = null;
-            liveChunksRef.current = [];
-          }
-        };
-        recorder.stop();
-      } catch {
-        liveRecorderRef.current = null;
-        liveChunksRef.current = [];
-        resolve(null);
-      }
-    });
   }, []);
 
   const captureStillFrame = useCallback((): string | null => {
@@ -330,16 +259,16 @@ function CameraFlowInternal({
     return dataUrl;
   }, [filter, mirror]);
 
-  const saveCapturedPhoto = useCallback((dataUrl: string, liveClipBlobUrl: string | null, liveClipDurationMs: number | null) => {
+  const saveCapturedPhoto = useCallback((dataUrl: string) => {
     if (retakePhotoId) {
-      pb.replacePhoto(retakePhotoId, dataUrl, FILTER_DEFS[filter].css, liveClipBlobUrl, liveClipDurationMs);
+      pb.replacePhoto(retakePhotoId, dataUrl, FILTER_DEFS[filter].css);
       setLastCapturedId(retakePhotoId);
       setRetakePhotoId(null);
     } else {
-      pb.addPhoto(slotIndex, dataUrl, FILTER_DEFS[filter].css, liveClipBlobUrl, liveClipDurationMs);
+      pb.addPhoto(slotIndex, dataUrl, FILTER_DEFS[filter].css);
       setLastCapturedId(`${Date.now()}`);
     }
-  }, [filter, mirror, pb, retakePhotoId, slotIndex]);
+  }, [filter, pb, retakePhotoId, slotIndex]);
 
   const advanceAfterCapture = useCallback(() => {
     if (retakePhotoId) {
@@ -378,9 +307,6 @@ function CameraFlowInternal({
     setPhase("countdown");
     setCountdown(dur);
     let remaining = dur;
-    let liveStarted = false;
-    const PRE_RECORD_MS = 500;
-    const POST_RECORD_MS = 1200;
     const id = window.setInterval(() => {
       remaining -= 1;
       setCountdown(remaining);
@@ -388,36 +314,14 @@ function CameraFlowInternal({
         window.clearInterval(id);
         setPhase("capturing");
         setCountdown(-1);
-        setTimeout(async () => {
-          const startedOk = liveStarted;
-          const dataUrl = captureStillFrame();
-          if (!dataUrl) {
-            if (startedOk) await stopLiveClipRecording();
-            setTimeout(advanceAfterCapture, 300);
-            return;
-          }
-          setTimeout(async () => {
-            let liveClip: { blobUrl: string; durationMs: number } | null = null;
-            if (startedOk) {
-              liveClip = await stopLiveClipRecording();
-            }
-            saveCapturedPhoto(
-              dataUrl,
-              liveClip?.blobUrl ?? null,
-              liveClip?.durationMs ?? null,
-            );
-            setTimeout(advanceAfterCapture, 50);
-          }, POST_RECORD_MS);
-        }, 50);
-      } else if (remaining === 1) {
-        const delay = Math.max(0, 1000 - PRE_RECORD_MS);
-        setTimeout(() => {
-          startLiveClipRecording();
-          liveStarted = true;
-        }, delay);
+        const dataUrl = captureStillFrame();
+        if (dataUrl) {
+          saveCapturedPhoto(dataUrl);
+        }
+        setTimeout(advanceAfterCapture, 300);
       }
     }, 1000);
-  }, [phase, retakePhotoId, countdownSeconds, captureStillFrame, stopLiveClipRecording, saveCapturedPhoto, advanceAfterCapture, startLiveClipRecording]);
+  }, [phase, retakePhotoId, countdownSeconds, captureStillFrame, saveCapturedPhoto, advanceAfterCapture]);
 
   const startAutoCapture = useCallback(() => {
     autoCancelledRef.current = false;
@@ -465,7 +369,7 @@ function CameraFlowInternal({
           if (oldPhoto && oldPhoto.dataUrl && oldPhoto.dataUrl.startsWith("blob:")) {
             URL.revokeObjectURL(oldPhoto.dataUrl);
           }
-          pb.replacePhoto(retakePhotoId, dataUrl, FILTER_DEFS[filter].css, null, null);
+          pb.replacePhoto(retakePhotoId, dataUrl, FILTER_DEFS[filter].css);
           setLastCapturedId(retakePhotoId);
           setRetakePhotoId(null);
           setPhase("review");
@@ -474,7 +378,7 @@ function CameraFlowInternal({
           if (exist && exist.dataUrl && exist.dataUrl.startsWith("blob:")) {
             URL.revokeObjectURL(exist.dataUrl);
           }
-          pb.addPhoto(slotIndex, dataUrl, FILTER_DEFS[filter].css, null, null);
+          pb.addPhoto(slotIndex, dataUrl, FILTER_DEFS[filter].css);
           setLastCapturedId(`${Date.now()}`);
           const next = slotIndex + 1;
           if (next >= slotsNeeded) {
@@ -627,18 +531,6 @@ function CameraFlowInternal({
               className={`absolute inset-0 w-full h-full object-cover ${mirror ? "scale-x-[-1]" : ""}`}
               style={{ filter: FILTER_DEFS[filter].css }}
             />
-            {/* LIVE FRAME OVERLAY (transparan) + highlight slot aktif, z-index tengah agar bawah countdown tapi di atas video */}
-            {frameOverlayUrl && currentSlot && !retakePhotoId && (
-              <LiveFrameOverlay
-                frameOverlayUrl={frameOverlayUrl}
-                frameWidth={selectedFrame?.canvas_width ?? 1200}
-                frameHeight={selectedFrame?.canvas_height ?? 1800}
-                slots={selectedFrame?.slots ?? []}
-                activeSlotOrder={currentSlot?.slot_order ?? slotIndex}
-                recapBackground={recapBackground}
-                selectedFrame={selectedFrame}
-              />
-            )}
             {cameraError && (
               <div className="absolute inset-0 flex items-center justify-center bg-[#2A1A0D]/90 p-6 text-center z-30">
                 <div>
@@ -673,13 +565,6 @@ function CameraFlowInternal({
             {phase === "capturing" && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
                 <div className="w-24 h-24 rounded-full border-[6px] border-white animate-ping opacity-80" />
-              </div>
-            )}
-            {isSlotLandscape && !cameraError && (
-              <div className="absolute left-0 right-0 top-3 z-20 text-center pointer-events-none">
-                <span className="inline-block px-3.5 py-1 rounded-full bg-secondary-500/95 text-[#3D2914] text-[11px] font-bold border-[3px] border-[#3D2914] shadow-retro-sm tracking-wide uppercase retro-badge-mustard !py-1 !px-3">
-                  💡 Putar HP ke landscape buat hasil terbaik
-                </span>
               </div>
             )}
 
@@ -1293,108 +1178,6 @@ function FrameOverlayThumb({
           </span>
         </div>
       )}
-    </div>
-  );
-}
-
-/* ============================================================
-   LiveFrameOverlay — overlay FRAME + BG transparent DI ATAS VIDEO
-   (camera live preview). User lihat batas slot aktif sebelum
-   motret, jadi kayak preview posisi langsung.
-   ============================================================ */
-function LiveFrameOverlay({
-  frameOverlayUrl,
-  frameWidth,
-  frameHeight,
-  slots,
-  activeSlotOrder,
-  recapBackground,
-  selectedFrame,
-}: {
-  frameOverlayUrl: string;
-  frameWidth: number;
-  frameHeight: number;
-  slots: { slot_order: number; x: number; y: number; width: number; height: number; rotation?: number | null }[];
-  activeSlotOrder: number;
-  recapBackground: string;
-  selectedFrame: { id?: string | number; name?: string | null; r2_image_path?: string | null } | null;
-}) {
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [imgError, setImgError] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    setImgLoaded(false);
-    setImgError(false);
-  }, [frameOverlayUrl]);
-
-  const ar = frameWidth && frameHeight ? frameWidth / frameHeight : 2 / 3;
-  const active = slots.find((s) => s.slot_order === activeSlotOrder);
-
-  return (
-    <div
-      className="absolute inset-0 w-full h-full pointer-events-none z-[12]"
-      aria-hidden="true"
-    >
-      <div
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"
-        style={{
-          aspectRatio: `${ar}`,
-          width: "100%",
-          height: "100%",
-          maxWidth: "100%",
-          maxHeight: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <div
-          className="relative"
-          style={{
-            aspectRatio: `${ar}`,
-            width: "100%",
-            height: "100%",
-            backgroundColor:
-              recapBackground && imgLoaded ? `${recapBackground}33` : "transparent",
-            boxShadow: imgLoaded ? "inset 0 0 0 1px rgba(61, 41, 20, 0.15)" : "none",
-          }}
-        >
-          {imgError ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 border-[2.5px] border-dashed border-destructive/80 rounded-lg bg-destructive/5 backdrop-blur-[1px]">
-              <ImageIcon size={28} weight="duotone" className="text-destructive/80" aria-hidden="true" />
-              <span className="text-[10px] md:text-[11px] font-heading text-heading-retro text-destructive tracking-wide uppercase">
-                Frame gagal dimuat
-              </span>
-            </div>
-          ) : (
-            <img
-              key={frameOverlayUrl}
-              src={frameOverlayUrl}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className={`absolute inset-0 w-full h-full object-fill select-none transition-opacity duration-200 ${
-                imgLoaded ? "opacity-[0.78]" : "opacity-0"
-              }`}
-              style={{ mixBlendMode: imgLoaded ? "multiply" : "normal" }}
-              onLoad={() => setImgLoaded(true)}
-              onError={(e) => {
-                console.error("[BA2W] Frame gagal load:", {
-                  frameId: selectedFrame?.id,
-                  frameName: selectedFrame?.name,
-                  r2ImagePath: selectedFrame?.r2_image_path,
-                  fullUrl: frameOverlayUrl,
-                }, e);
-                const t = e.currentTarget as HTMLImageElement;
-                t.style.opacity = "0.9";
-                t.style.mixBlendMode = "normal";
-                setImgError(true);
-              }}
-            />
-          )}
-        </div>
-      </div>
     </div>
   );
 }

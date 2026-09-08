@@ -60,7 +60,6 @@ export function EditorStep() {
   } = pb;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const frameImgRef = useRef<HTMLImageElement | null>(null);
 
   const [stickersLoading, setStickersLoading] = useState(true);
   const [selectedSlotOrder, setSelectedSlotOrder] = useState<number | null>(null);
@@ -69,15 +68,7 @@ export function EditorStep() {
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
 
-  // ========================== [FIX FRAME TIDAK MUNCUL 100%] ==========================
-  // VISUAL DISPLAY (opacity) SEPENUHNYA DIPISAH DARI EXPORT CANVAS STATE.
-  // - frameVisualLoaded: TRUE cuma dari event onLoad <img> DOM LANGSUNG (tanpa crossOrigin).
-  //   Visual frame SELALU MUNCUL kalo gambarnya ada. TIDAK PERNAH dipengaruhi error CORS,
-  //   karena element <img> TANPA atribut crossOrigin tidak pernah CORS check oleh browser.
-  // - frameCanvasOk: TRUE ketika object Image berhasil load untuk EXPORT CANVAS FINAL.
-  //   Bisa fail (ketika CORS tidak ada di R2 bucket), tapi TIDAK GANGGU VISUAL DISPLAY.
   const [frameVisualLoaded, setFrameVisualLoaded] = useState(false);
-  const [frameCanvasOk, setFrameCanvasOk] = useState(false);
 
   // ===== [TOGGLE OPSI USER: PADDING BACKGROUND AREA] =====
   // - TRUE  (ON) : CANVAS MELEBAR — ada area padding warna background LUAR frame,
@@ -119,48 +110,9 @@ export function EditorStep() {
     };
   }, [setStickers]);
 
-  // ===== [EXPORT ONLY — TIDAK PENGARUHI VISUAL] =====
-  // Load frame jadi object Image HTMLImageElement untuk di ctx.drawImage() export HD final.
-  // Perlu crossOrigin biar canvas tidak tainted & toDataURL aman. Tapi R2 bucket
-  // kadang tidak ada header Access-Control-Allow-Origin (CORS error di localhost).
-  // Strategy: 1) Try crossOrigin=anonymous ✅ (clean canvas toDataURL aman)
-  //           2) Kalo FAIL, fallback TANPA crossOrigin (canvas mungkin tainted,
-  //              nanti di toDataURL try/catch alert user). Minimal visual tetap aman.
-  // VISUAL DISPLAY opacity (frameVisualLoaded) SAMA SEKALI TIDAK TERGANTUNG effect ini.
   useEffect(() => {
-    if (!frameOverlayUrl) {
-      frameImgRef.current = null;
-      setFrameCanvasOk(false);
-      return;
-    }
-    let cancelled = false;
-    frameImgRef.current = null;
-    setFrameCanvasOk(false);
-    // Reset visual state juga kapan URL frame berganti (agar fade-in / state fresh).
     setFrameVisualLoaded(false);
-
-    const tryLoad = (useCrossOrigin: boolean, onFail?: () => void) => {
-      const img = new Image();
-      if (useCrossOrigin) (img as any).crossOrigin = "anonymous";
-      img.onload = () => {
-        if (cancelled) return;
-        frameImgRef.current = img;
-        setFrameCanvasOk(true);
-      };
-      img.onerror = (ev) => {
-        if (cancelled) return;
-        console.warn(`[BA2W Export canvas frame load crossOrigin=${useCrossOrigin ? 'anonymous' : 'off'}] gagal.`, onFail ? 'Fallback tanpa CORS...' : '(export gambar frame akan hilang. Solusi: setting CORS R2 bucket origin localhost:3000)', {
-          frameId: selectedFrame?.id,
-          fullUrl: frameOverlayUrl,
-        }, ev);
-        if (onFail) onFail();
-      };
-      img.src = frameOverlayUrl;
-    };
-
-    tryLoad(true, () => tryLoad(false));
-    return () => { cancelled = true; };
-  }, [frameOverlayUrl, selectedFrame]);
+  }, [frameOverlayUrl]);
 
   // Inisialisasi PhotoTransform untuk foto yang belum punya (x,y,w,h,rot)
   // Dipanggil sekali pada mount & ketika foto berubah
@@ -265,21 +217,17 @@ export function EditorStep() {
         photos,
         photoTransforms,
         placedStickers,
-        // OUTPUT HD = TOTAL CANVAS sesuai user toggle padding actual.
-        // ON  = frameW + 2*150 (luas, ada background luar frame).
-        // OFF = sama dengan size frame asli (padding 0, fit).
         outputWidth: totalCw,
         outputHeight: totalCh,
         recapBackground,
-      }).catch((e) => {
-        // Fallback jika canvas TAINED (R2 bucket tidak ada header CORS).
-        alert("⚠️ Gagal export bersih karena CORS bucket belum setting (localhost:3000 blm di whitelist).\nSolusi cepat: akses via domain production, atau setting CORS R2 untuk origin http://localhost:3000.\n\nError: " + (e?.message || e));
-        throw e;
       });
       const name =
         selectedFrame?.name?.replace(/\s+/g, "-").toLowerCase() ?? "photobooth";
       downloadDataUrl(url, `ba2w-${name}-${Date.now()}.png`);
       setDownloaded(true);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      alert("Gagal export photobooth. Coba lagi.\n\n" + message);
     } finally {
       setDownloading(false);
     }
@@ -512,22 +460,11 @@ export function EditorStep() {
                 );
               })}
 
-            {/* ============= Layer 3: Frame PNG Overlay (DIATAS FOTO, DI BAWAH STICKER) =============*/}
-            {/* [FIX 100% FRAME SELALU MUNCUL]:
-                 - ELEMENT <img> INI TANPA crossOrigin ATRIBUTE SAMA SEKALI.
-                   Browser TIDAK PERNAH CORS check untuk <img> tanpa crossOrigin —
-                   SELALU bisa load walau R2 tidak ada Access-Control-Allow-Origin header.
-                 - onLoad event LANGSUNG dari DOM element ini yang ngontrol visual opacity.
-                   TIDAK bergantung preload JS object (yang strict CORS). Jadi pasti tampil.
-                 - POSISI: tidak lagi inset-0 tapi DITENGAH total canvas,
-                   size tepat = ukuran asli frame (cw x ch), di-offset CANVAS_PADDING. */}
+            {/* Layer 3: Frame PNG overlay (visual only — no crossOrigin) */}
             {frameOverlayUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={frameOverlayUrl}
-                // [FIX FRAME HILANG PAS FIT FRAME] Sertakan state paddingEnabled ke KEY,
-                // jadi setiap kali user klik toggle wrap/fit → React remount img BARU,
-                // → onLoad event FIRE LAGI → frameVisualLoaded = TRUE (bukan stuck false opacity=0)
                 key={frameOverlayUrl + "-" + String(paddingEnabled)}
                 alt=""
                 aria-hidden="true"
@@ -551,47 +488,47 @@ export function EditorStep() {
               />
             )}
 
-            {/* Layer 4: Stickers (absolute global via internal wrapper) */}
-            {placedStickers.map((s) => {
-              // Sticker state (s.x, s.y) relatif ke AREA FRAME.
-              // Tambah OFFSET CANVAS_PADDING_X/Y biar posisi tepat di tengah total canvas,
-              // sesuai dengan padding kita tambahkan di luar frame.
-              const displayX = (s.x + actualPadX) * displayScaleRef.current;
-              const displayY = (s.y + actualPadY) * displayScaleRef.current;
-              const displayW = s.width * displayScaleRef.current;
-              const displayH = s.height * displayScaleRef.current;
-              const selected = s.id === selectedStickerId;
-              return (
-                <StickerOnCanvas
-                  key={s.id}
-                  sticker={s}
-                  selected={selected}
-                  displayX={displayX}
-                  displayY={displayY}
-                  displayW={displayW}
-                  displayH={displayH}
-                  scale={displayScaleRef.current}
-                  onSelect={() => {
-                    setSelectedStickerId(s.id);
-                    setSelectedSlotOrder(null);
-                  }}
-                  onUpdate={(patch) => {
-                    const canvasPatch: Partial<PlacedSticker> = {};
-                    if (patch.x !== undefined) canvasPatch.x = patch.x;
-                    if (patch.y !== undefined) canvasPatch.y = patch.y;
-                    if (patch.width !== undefined) canvasPatch.width = patch.width;
-                    if (patch.height !== undefined) canvasPatch.height = patch.height;
-                    if (patch.rotation !== undefined)
-                      canvasPatch.rotation = patch.rotation;
-                    updatePlacedSticker(s.id, canvasPatch);
-                  }}
-                  onDelete={() => {
-                    removePlacedSticker(s.id);
-                    if (selectedStickerId === s.id) setSelectedStickerId(null);
-                  }}
-                />
-              );
-            })}
+            {/* Layer 4: Stickers — frame-space coords; Transformer owns position */}
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: `${toDisplayPx(actualPadX)}px`,
+                top: `${toDisplayPx(actualPadY)}px`,
+                width: `${toDisplayPx(cw)}px`,
+                height: `${toDisplayPx(ch)}px`,
+                zIndex: 20,
+              }}
+            >
+              {placedStickers.map((s) => {
+                const selected = s.id === selectedStickerId;
+                return (
+                  <StickerOnCanvas
+                    key={s.id}
+                    sticker={s}
+                    selected={selected}
+                    scale={displayScaleRef.current}
+                    onSelect={() => {
+                      setSelectedStickerId(s.id);
+                      setSelectedSlotOrder(null);
+                    }}
+                    onUpdate={(patch) => {
+                      const canvasPatch: Partial<PlacedSticker> = {};
+                      if (patch.x !== undefined) canvasPatch.x = patch.x;
+                      if (patch.y !== undefined) canvasPatch.y = patch.y;
+                      if (patch.width !== undefined) canvasPatch.width = patch.width;
+                      if (patch.height !== undefined) canvasPatch.height = patch.height;
+                      if (patch.rotation !== undefined)
+                        canvasPatch.rotation = patch.rotation;
+                      updatePlacedSticker(s.id, canvasPatch);
+                    }}
+                    onDelete={() => {
+                      removePlacedSticker(s.id);
+                      if (selectedStickerId === s.id) setSelectedStickerId(null);
+                    }}
+                  />
+                );
+              })}
+            </div>
 
             {/* Loading state */}
             {!displayScaleTick && (
@@ -874,10 +811,6 @@ function BackgroundPickerRow({
 function StickerOnCanvas({
   sticker,
   selected,
-  displayX,
-  displayY,
-  displayW,
-  displayH,
   scale,
   onSelect,
   onUpdate,
@@ -885,10 +818,6 @@ function StickerOnCanvas({
 }: {
   sticker: PlacedSticker;
   selected: boolean;
-  displayX: number;
-  displayY: number;
-  displayW: number;
-  displayH: number;
   scale: number;
   onSelect: () => void;
   onUpdate: (patch: {
@@ -903,47 +832,32 @@ function StickerOnCanvas({
   return (
     <div
       data-sticker
-      className="absolute"
+      className="absolute inset-0"
       style={{
-        left: `${displayX - 8}px`,
-        top: `${displayY - 8}px`,
-        width: `${displayW + 16}px`,
-        height: `${displayH + 16}px`,
         zIndex: selected ? 30 : 20,
+        pointerEvents: "none",
       }}
     >
-      <div className="relative w-full h-full">
-        <div
-          className="absolute"
-          style={{
-            left: "8px",
-            top: "8px",
-            width: `${displayW}px`,
-            height: `${displayH}px`,
-          }}
-        >
-          <Transformer
-            selected={selected}
-            x={0}
-            y={0}
-            width={sticker.width}
-            height={sticker.height}
-            rotation={sticker.rotation ?? 0}
-            scale={scale}
-            onSelect={onSelect}
-            onUpdate={onUpdate}
-            accentColor="#EC4899"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={sticker.imageUrl}
-              alt="sticker"
-              draggable={false}
-              className="w-full h-full object-contain select-none pointer-events-none block sticker-shadow"
-              style={{ userSelect: "none" }}
-            />
-          </Transformer>
-        </div>
+      <Transformer
+        selected={selected}
+        x={sticker.x}
+        y={sticker.y}
+        width={sticker.width}
+        height={sticker.height}
+        rotation={sticker.rotation ?? 0}
+        scale={scale}
+        onSelect={onSelect}
+        onUpdate={onUpdate}
+        accentColor="#EC4899"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={sticker.imageUrl}
+          alt="sticker"
+          draggable={false}
+          className="w-full h-full object-contain select-none pointer-events-none block sticker-shadow"
+          style={{ userSelect: "none" }}
+        />
         {selected && (
           <button
             onClick={(e) => {
@@ -952,13 +866,14 @@ function StickerOnCanvas({
             }}
             onPointerDown={(e) => e.stopPropagation()}
             className="absolute -top-2 -right-2 z-40 w-8 h-8 md:w-9 md:h-9 rounded-full bg-destructive text-white flex items-center justify-center shadow-retro-sm border-[3px] border-[#3D2914] hover:scale-110 active:scale-95 transition-transform focus-ring"
+            style={{ pointerEvents: "auto" }}
             title="Hapus sticker ini"
             aria-label="Hapus sticker"
           >
             <Trash size={14} weight="fill" />
           </button>
         )}
-      </div>
+      </Transformer>
     </div>
   );
 }

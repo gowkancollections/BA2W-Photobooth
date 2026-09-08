@@ -197,18 +197,7 @@ export async function renderPhotoboothCanvas(
     const frameUrl = frameImageUrl(frame.r2_image_path);
     if (frameUrl) {
       try {
-        const frameImg = await loadImageCached(frameUrl).catch(async () => {
-          // Fallback kalo loadImageCached (yang crossOrigin) gagal total CORS.
-          // Coba load tanpa crossOrigin (canvas jadi tainted (toDataURL error nanti,
-          // tapi minimal gambar frame setidaknya muncul kalo di canvas context bisa (contoh preload image object tanpa CORS).
-          console.warn("[render] crossOrigin frame gagal (CORS?), coba tanpa CORS fallback");
-          return await new Promise<HTMLImageElement>((resolve, reject) => {
-            const im = new Image();
-            im.onload = () => resolve(im);
-            im.onerror = reject;
-            im.src = frameUrl;
-          });
-        });
+        const frameImg = await loadImageCached(frameUrl);
         ctx.drawImage(frameImg, padX, padY, frameW, frameH);
       } catch (err) {
         console.warn("[BA2W render] Frame PNG overlay TIDAK bisa dimuat (export tidak ada frame overlay):", err);

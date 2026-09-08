@@ -52,7 +52,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!(contentType in ALLOWED_MIME)) {
+    const normalizedType =
+      contentType === "image/jpg" || contentType === "image/pjpeg"
+        ? "image/jpeg"
+        : contentType;
+
+    if (!(normalizedType in ALLOWED_MIME)) {
       return NextResponse.json(
         { error: `Content-Type tidak diizinkan: ${contentType}` },
         { status: 400 },
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
       key = `stickers/${id}/sticker.${ext}`;
     }
 
-    const presigned = await generatePresignedPutUrl(key, contentType, 900);
+    const presigned = await generatePresignedPutUrl(key, normalizedType, 900);
 
     return NextResponse.json({
       id,

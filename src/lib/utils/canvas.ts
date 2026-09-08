@@ -1,20 +1,43 @@
-export function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {
+function decodeImageFromSrc(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = (e) => reject(e);
-    img.src = dataUrl;
+    img.src = src;
   });
 }
 
+export function dataUrlToImage(dataUrl: string): Promise<HTMLImageElement> {
+  return decodeImageFromSrc(dataUrl);
+}
+
+/**
+ * Load image for canvas draw/export via fetch + Blob URL.
+ * Avoids Safari/WebKit disk-cache collision between a non-CORS <img>
+ * request and a later Image() + crossOrigin request to the same URL.
+ * Blob URLs are same-origin, so the canvas is never tainted.
+ */
+export async function loadImageForCanvas(url: string): Promise<HTMLImageElement> {
+  if (url.startsWith("data:") || url.startsWith("blob:")) {
+    return decodeImageFromSrc(url);
+  }
+
+  const res = await fetch(url, { mode: "cors" });
+  if (!res.ok) {
+    throw new Error(`Gagal fetch gambar: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    return await decodeImageFromSrc(blobUrl);
+  } catch (err) {
+    URL.revokeObjectURL(blobUrl);
+    throw err;
+  }
+}
+
 export function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
-    img.src = url;
-  });
+  return loadImageForCanvas(url);
 }
 
 const imageCache = new Map<string, HTMLImageElement>();
@@ -22,7 +45,7 @@ const imageCache = new Map<string, HTMLImageElement>();
 export async function loadImageCached(url: string): Promise<HTMLImageElement> {
   const cached = imageCache.get(url);
   if (cached) return cached;
-  const img = await loadImage(url);
+  const img = await loadImageForCanvas(url);
   imageCache.set(url, img);
   return img;
 }

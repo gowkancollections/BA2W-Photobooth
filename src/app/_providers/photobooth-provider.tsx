@@ -37,8 +37,8 @@ interface PhotoboothContextValue extends SessionState {
   setCaptureMode: (m: CaptureMode) => void;
   setCountdownSeconds: (n: number) => void;
   setRecapBackground: (c: string) => void;
-  addPhoto: (slotOrder: number, dataUrl: string, filterCss: string, liveClipBlobUrl?: string | null, liveClipDurationMs?: number | null) => void;
-  replacePhoto: (photoId: string, dataUrl: string, filterCss: string, liveClipBlobUrl?: string | null, liveClipDurationMs?: number | null) => void;
+  addPhoto: (slotOrder: number, dataUrl: string, filterCss: string) => void;
+  replacePhoto: (photoId: string, dataUrl: string, filterCss: string) => void;
   removePhoto: (photoId: string) => void;
   clearPhotos: () => void;
   setPhotoTransform: (
@@ -140,7 +140,7 @@ export function PhotoboothProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addPhoto = useCallback(
-    (slotOrder: number, dataUrl: string, filterCss: string, liveClipBlobUrl?: string | null, liveClipDurationMs?: number | null) => {
+    (slotOrder: number, dataUrl: string, filterCss: string) => {
       const id = uuidv4();
       const photo: CapturedPhoto = {
         id,
@@ -148,39 +148,26 @@ export function PhotoboothProvider({ children }: { children: ReactNode }) {
         dataUrl,
         filterCss,
         takenAt: Date.now(),
-        liveClipBlobUrl: liveClipBlobUrl ?? null,
-        liveClipDurationMs: liveClipDurationMs ?? null,
       };
-      setState((s) => {
-        const existing = s.photos.find((p) => p.slotOrder === slotOrder);
-        if (existing?.liveClipBlobUrl) {
-          URL.revokeObjectURL(existing.liveClipBlobUrl);
-        }
-        return {
-          ...s,
-          photos: [...s.photos.filter((p) => p.slotOrder !== slotOrder), photo],
-        };
-      });
+      setState((s) => ({
+        ...s,
+        photos: [...s.photos.filter((p) => p.slotOrder !== slotOrder), photo],
+      }));
     },
     [],
   );
 
   const replacePhoto = useCallback(
-    (photoId: string, dataUrl: string, filterCss: string, liveClipBlobUrl?: string | null, liveClipDurationMs?: number | null) => {
+    (photoId: string, dataUrl: string, filterCss: string) => {
       setState((s) => ({
         ...s,
         photos: s.photos.map((p) => {
           if (p.id === photoId) {
-            if (p.liveClipBlobUrl && p.liveClipBlobUrl !== liveClipBlobUrl) {
-              URL.revokeObjectURL(p.liveClipBlobUrl);
-            }
             return {
               ...p,
               dataUrl,
               filterCss,
               takenAt: Date.now(),
-              liveClipBlobUrl: liveClipBlobUrl !== undefined ? liveClipBlobUrl : p.liveClipBlobUrl,
-              liveClipDurationMs: liveClipDurationMs !== undefined ? liveClipDurationMs : p.liveClipDurationMs,
             };
           }
           return p;
@@ -191,26 +178,15 @@ export function PhotoboothProvider({ children }: { children: ReactNode }) {
   );
 
   const removePhoto = useCallback((photoId: string) => {
-    setState((s) => {
-      const target = s.photos.find((p) => p.id === photoId);
-      if (target?.liveClipBlobUrl) {
-        URL.revokeObjectURL(target.liveClipBlobUrl);
-      }
-      return {
-        ...s,
-        photos: s.photos.filter((p) => p.id !== photoId),
-        photoTransforms: s.photoTransforms.filter((t) => t.photoId !== photoId),
-      };
-    });
+    setState((s) => ({
+      ...s,
+      photos: s.photos.filter((p) => p.id !== photoId),
+      photoTransforms: s.photoTransforms.filter((t) => t.photoId !== photoId),
+    }));
   }, []);
 
   const clearPhotos = useCallback(() => {
-    setState((s) => {
-      s.photos.forEach((p) => {
-        if (p.liveClipBlobUrl) URL.revokeObjectURL(p.liveClipBlobUrl);
-      });
-      return { ...s, photos: [] };
-    });
+    setState((s) => ({ ...s, photos: [] }));
   }, []);
 
   const setPhotoTransform = useCallback(
@@ -271,12 +247,7 @@ export function PhotoboothProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetAll = useCallback(() => {
-    setState((s) => {
-      s.photos.forEach((p) => {
-        if (p.liveClipBlobUrl) URL.revokeObjectURL(p.liveClipBlobUrl);
-      });
-      return EMPTY_STATE;
-    });
+    setState(EMPTY_STATE);
   }, []);
 
   const value = useMemo<PhotoboothContextValue>(
