@@ -132,12 +132,23 @@ export function computeCoverFit(params: CoverFitParams): CoverFitResult {
 }
 
 export function downloadDataUrl(dataUrl: string, filename: string) {
+  const [header, base64] = dataUrl.split(",");
+  const mimeMatch = header.match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime });
+  const blobUrl = URL.createObjectURL(blob);
+
   const a = document.createElement("a");
-  a.href = dataUrl;
+  a.href = blobUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
 }
 
 export function readFileAsDataUrl(file: File): Promise<string> {
